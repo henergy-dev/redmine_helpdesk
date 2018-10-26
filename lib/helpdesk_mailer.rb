@@ -14,10 +14,16 @@ class HelpdeskMailer < ActionMailer::Base
     { :host => Setting.host_name, :protocol => Setting.protocol }
   end
 
+  # might be deleted
+  if defined?(issue.id) && !issue.id.blank?
+    variab1 = "issue.id: " + issue.id.to_s
+  else
+    variab1 = "issue.id not defined"
+  end
+
   # Sending email notifications to the supportclient
   def email_to_supportclient(issue, params)
     # issue, recipient, journal=nil, text='', copy_to=nil    
-
     recipient = params[:recipient]
     journal = params[:journal]
     text = params[:text]
@@ -29,7 +35,7 @@ class HelpdeskMailer < ActionMailer::Base
     redmine_headers 'Issue-Assignee' => issue.assigned_to.login if issue.assigned_to
     message_id issue
     references issue
-
+    
     subject = "[#{issue.project.name} - ##{issue.id}] #{issue.subject}"
     # Set 'from' email-address to 'helpdesk-sender-email' if available.
     # Falls back to regular redmine behaviour if 'sender' is empty.
@@ -70,7 +76,58 @@ class HelpdeskMailer < ActionMailer::Base
     mail = if text.present? || reply.present?
       # sending out the journal note to the support client
       # or the first reply message
-      t = text.present? ? "#{text}\n\n#{footer}" : reply
+      
+      # ---------------------------------------
+      
+      text_on_date = "In data"
+      text_has_written = "Ha scritto"
+      old_posts_array = []
+
+        # --- functions ---
+        def readableName(author, email)
+          if (author.lastname != "Anonymous") 
+            return "#{author.firstname} #{author.lastname}"
+          else
+            return email
+          end
+        end
+
+        def readableDate(date)
+          date = date.to_s
+          return date[0...-4]
+        end
+
+        # --- queries ---
+        Journal.where(:journalized_id => issue.id).where(:journalized_type => "Issue").order("created_on DESC").each do |old_post|
+
+        journal_author = User.find(old_post.user_id)        
+        recipient_name = readableName(journal_author, recipient);
+
+        # --- message 
+        complete_post = "\n---\n#{text_on_date} #{readableDate(old_post.created_on)} #{recipient_name} #{text_has_written}:\n\n #{old_post.notes}\n\n"
+
+        old_posts_array << complete_post
+
+      end
+ 
+      # --- out of the loop: first post by the customer ---
+
+      original_author = User.find(issue.author_id)
+      original_name = readableName(original_author, recipient)
+      original_text = issue.description[issue.description.index('</pre>')+6..-1]
+
+      first_post = "\n---\n#{text_on_date} #{readableDate(issue.created_on)} #{original_name} #{text_has_written}:\n #{original_text}\n"
+      
+      old_posts_array << first_post 
+      
+      # prevents the last interaction to show up.
+      old_posts_array = old_posts_array.drop(1)
+      old_posts = old_posts_array.join('')
+
+      t = text.present? ? "#{text}\n\n#{footer}\n\n#{old_posts}" : reply
+
+      # ---------------------------------------
+
       mail(
         :from     => sender.present? && sender || Setting.mail_from,
         :reply_to => sender.present? && sender || Setting.mail_from,
